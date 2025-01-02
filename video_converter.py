@@ -10,6 +10,7 @@ import win32service
 import win32event
 import servicemanager
 import logging
+from threading import Timer
 
 # 配置日志
 logging.basicConfig(level=logging.INFO,
@@ -20,10 +21,21 @@ class VideoHandler(FileSystemEventHandler):
     def __init__(self, config):
         self.config = config
         self.video_extensions = ('.wmv', '.avi', '.mkv', '.mov', '.mp4')
+        self.timers = {}
 
     def on_created(self, event):
         if not event.is_directory and event.src_path.lower().endswith(self.video_extensions):
-            self.convert_video(event.src_path)
+            self.schedule_conversion(event.src_path)
+
+    def on_modified(self, event):
+        if not event.is_directory and event.src_path.lower().endswith(self.video_extensions):
+            self.schedule_conversion(event.src_path)
+
+    def schedule_conversion(self, video_path):
+        if video_path in self.timers:
+            self.timers[video_path].cancel()
+        self.timers[video_path] = Timer(30, self.convert_video, [video_path])
+        self.timers[video_path].start()
 
     def convert_video(self, video_path):
         output_path = os.path.join(
@@ -50,13 +62,15 @@ class VideoHandler(FileSystemEventHandler):
             '--no-multi-pass',  # 单通道编码
             '--aencoder', 'av_aac'  # 音频编码器
         ]
-        
-        logging.info(f"开始转换: {video_path}")
+
         try:
             subprocess.run(cmd, check=True)
-            logging.info(f"转换完成: {output_path}")
+            logging.info(f"视频转换完成: {output_path}")
         except subprocess.CalledProcessError as e:
-            logging.error(f"转换失败: {str(e)}")
+            logging.error(f"视频转换失败: {str(e)}")
+        finally:
+            if video_path in self.timers:
+                del self.timers[video_path]
 
 class HandBrakeService(win32serviceutil.ServiceFramework):
     _svc_name_ = "HandBrakeConverter"  # 更改服务名称
